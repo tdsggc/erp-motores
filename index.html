@@ -1,0 +1,482 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#10243d">
+<title>ERP | Controle de Motores</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#edf2f7;color:#17243b;font-family:Arial,sans-serif}
+header{background:#10243d;color:white;padding:18px}
+header h2{margin:0;font-size:21px}
+header small{color:#a9c5e4}
+main{max-width:1200px;margin:auto;padding:15px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+button,.btn{background:#1769c2;color:white;border:0;border-radius:8px;padding:12px;cursor:pointer;font-weight:bold}
+nav button{flex:1;min-width:115px}
+.card{background:white;padding:20px;border-radius:12px;margin-bottom:15px;box-shadow:0 2px 10px #0001}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.kpi{background:white;padding:18px;border-radius:12px;text-align:center}
+.kpi strong{display:block;font-size:30px;color:#1769c2}
+input,select,textarea{width:100%;padding:12px;border:1px solid #ccd5e0;border-radius:8px;margin:6px 0 14px;font-size:15px}
+label{font-weight:bold;font-size:13px}
+.hidden{display:none!important}
+table{width:100%;border-collapse:collapse}
+td,th{padding:12px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}
+.wrap{overflow-x:auto}
+.photo{width:100%;max-width:300px;border-radius:10px}
+.status{font-weight:bold}
+.green{color:#16803b}
+.blue{color:#1769c2}
+.orange{color:#d97706}
+.red{color:#c62828}
+#reader{max-width:480px;margin:auto}
+#qr{padding:12px;background:white;display:inline-block}
+.info{background:#e8f1fc;padding:12px;border-radius:8px;margin-bottom:15px}
+.danger{background:#a82020}
+@media(max-width:650px){
+.grid{grid-template-columns:repeat(2,1fr)}
+main{padding:10px}
+.card{padding:14px}
+header h2{font-size:18px}
+}
+</style>
+</head>
+
+<body>
+<header>
+<h2>⚙ ERP DE MOTORES ELÉTRICOS</h2>
+<small>Gestão de estoque, manutenção e instalação</small>
+</header>
+
+<main>
+<nav>
+<button onclick="mostrar('dashboard')">Dashboard</button>
+<button onclick="mostrar('cadastro')">Cadastrar</button>
+<button onclick="mostrar('scanner');iniciarScanner()">Ler QR</button>
+<button onclick="exportar()">Excel CSV</button>
+</nav>
+
+<section id="dashboard">
+<h2>Painel de Controle</h2>
+<div class="grid" id="indicadores"></div>
+<div class="card">
+<h3>Inventário de motores</h3>
+<input id="pesquisa" placeholder="Pesquisar TAG, fabricante ou local" oninput="listar()">
+<div class="wrap">
+<table>
+<thead>
+<tr>
+<th>TAG</th><th>Potência</th><th>Corrente</th>
+<th>Local</th><th>Condição</th><th>Status</th><th>Ação</th>
+</tr>
+</thead>
+<tbody id="tabela"></tbody>
+</table>
+</div>
+</div>
+</section>
+
+<section id="cadastro" class="hidden">
+<div class="card">
+<h2>Cadastrar motor</h2>
+<form id="formMotor">
+<label>TAG do motor</label>
+<input name="tag" required placeholder="Ex: MOT-001">
+
+<label>Fabricante</label>
+<input name="fabricante" placeholder="Ex: WEG">
+
+<label>Modelo</label>
+<input name="modelo">
+
+<label>Potência (kW)</label>
+<input name="potencia" type="number" step="any" min="0" required>
+
+<label>Corrente nominal (A)</label>
+<input name="corrente" type="number" step="any" min="0" required>
+
+<label>Tensão (V)</label>
+<input name="tensao" type="number" step="any" min="0">
+
+<label>Local de instalação ou armazenamento</label>
+<input name="local" required>
+
+<label>Condição</label>
+<select name="condicao">
+<option>Novo</option>
+<option>Usado</option>
+</select>
+
+<label>Foto do motor</label>
+<input name="foto" type="file" accept="image/*" capture="environment">
+
+<button type="submit">Salvar motor e gerar QR Code</button>
+</form>
+</div>
+</section>
+
+<section id="detalhes" class="hidden">
+<div class="card" id="dadosMotor"></div>
+<div class="card">
+<h3>Movimentar motor</h3>
+<form id="formMovimento">
+<label>Situação do motor</label>
+<select id="novoStatus">
+<option>Disponível</option>
+<option>Em uso</option>
+<option>Para assistência</option>
+<option>Em assistência</option>
+<option>Baixado</option>
+</select>
+<label>Local / Setor</label>
+<input id="novoLocal" required>
+<label>Responsável</label>
+<input id="responsavel" required>
+<label>Observação</label>
+<textarea id="observacao"></textarea>
+<button type="submit">Registrar movimentação</button>
+</form>
+</div>
+<div class="card">
+<h3>Histórico</h3>
+<div id="historico"></div>
+</div>
+</section>
+
+<section id="scanner" class="hidden">
+<div class="card">
+<h2>Escanear QR Code</h2>
+<p>Aponte a câmera para a etiqueta do motor.</p>
+<div id="reader"></div>
+<button onclick="iniciarScanner()">Ativar câmera</button>
+</div>
+</section>
+
+<div class="info" id="aviso">
+Os dados desta versão ficam salvos somente neste navegador.
+</div>
+</main>
+
+<script>
+const CHAVE="erp_motores_v1";
+const STATUS=[
+"Disponível","Em uso","Para assistência",
+"Em assistência","Baixado"
+];
+
+let motores=[];
+let motorAtual=null;
+let scanner=null;
+
+function carregar(){
+ try{
+   const dados=JSON.parse(localStorage.getItem(CHAVE)||"[]");
+   motores=Array.isArray(dados)?dados:[];
+ }catch(e){
+   motores=[];
+ }
+}
+
+function salvar(){
+ try{
+   localStorage.setItem(CHAVE,JSON.stringify(motores));
+   return true;
+ }catch(e){
+   alert("Armazenamento cheio. Reduza as fotos ou exporte os dados.");
+   return false;
+ }
+}
+
+function esc(texto){
+ return String(texto??"").replace(/[&<>"']/g,c=>({
+ "&":"&amp;","<":"&lt;",">":"&gt;",
+ '"':"&quot;","'":"&#39;"
+ })[c]);
+}
+
+function mostrar(nome){
+ document.querySelectorAll("main section").forEach(s=>{
+   s.classList.add("hidden");
+ });
+ document.getElementById(nome).classList.remove("hidden");
+ if(nome==="dashboard")listar();
+ if(nome!=="scanner")pararScanner();
+ window.scrollTo(0,0);
+}
+
+function listar(){
+ const busca=document.getElementById("pesquisa").value.toLowerCase();
+ const tabela=document.getElementById("tabela");
+ tabela.innerHTML="";
+
+ motores.filter(m=>
+  [m.tag,m.fabricante,m.local,m.status].join(" ")
+   .toLowerCase().includes(busca)
+ ).forEach(m=>{
+  const tr=document.createElement("tr");
+  tr.innerHTML=`
+   <td>${esc(m.tag)}</td>
+   <td>${esc(m.potencia)} kW</td>
+   <td>${esc(m.corrente)} A</td>
+   <td>${esc(m.local)}</td>
+   <td>${esc(m.condicao)}</td>
+   <td class="status">${esc(m.status)}</td>
+   <td><button type="button">Abrir</button></td>`;
+  tr.querySelector("button").onclick=()=>abrirMotor(m.id);
+  tabela.appendChild(tr);
+ });
+
+ document.getElementById("indicadores").innerHTML=
+  `<div class="kpi">Total<strong>${motores.length}</strong></div>`+
+  STATUS.map(s=>`
+   <div class="kpi">${esc(s)}
+   <strong>${motores.filter(m=>m.status===s).length}</strong>
+   </div>`).join("");
+}
+
+function lerFoto(arquivo){
+ return new Promise((resolve,reject)=>{
+  if(!arquivo){resolve("");return;}
+  if(!arquivo.type.startsWith("image/")){
+   reject(new Error("Selecione uma imagem válida."));
+   return;
+  }
+  const img=new Image();
+  const url=URL.createObjectURL(arquivo);
+  img.onload=()=>{
+   const canvas=document.createElement("canvas");
+   const escala=Math.min(1,800/img.width,800/img.height);
+   canvas.width=Math.max(1,Math.round(img.width*escala));
+   canvas.height=Math.max(1,Math.round(img.height*escala));
+   canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+   URL.revokeObjectURL(url);
+   resolve(canvas.toDataURL("image/jpeg",0.65));
+  };
+  img.onerror=()=>{
+   URL.revokeObjectURL(url);
+   reject(new Error("Não foi possível ler a foto."));
+  };
+  img.src=url;
+ });
+}
+
+document.getElementById("formMotor").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const f=e.target;
+ const dados=new FormData(f);
+ const id=crypto.randomUUID();
+
+ let foto="";
+ try{
+  foto=await lerFoto(dados.get("foto"));
+ }catch(erro){
+  alert(erro.message);
+  return;
+ }
+
+ const motor={
+  id,
+  tag:String(dados.get("tag")).trim(),
+  fabricante:String(dados.get("fabricante")||""),
+  modelo:String(dados.get("modelo")||""),
+  potencia:Number(dados.get("potencia")),
+  corrente:Number(dados.get("corrente")),
+  tensao:Number(dados.get("tensao")),
+  local:String(dados.get("local")).trim(),
+  condicao:String(dados.get("condicao")),
+  status:"Disponível",
+  foto,
+  fotoId:foto?"IMG-"+id.slice(0,8).toUpperCase():"",
+  data:new Date().toISOString(),
+  historico:[{
+   data:new Date().toISOString(),
+   anterior:"",
+   novo:"Disponível",
+   local:String(dados.get("local")).trim(),
+   responsavel:"Cadastro",
+   observacao:"Cadastro inicial"
+  }]
+ };
+
+ if(!motor.tag||!motor.local){
+  alert("Preencha TAG e local.");
+  return;
+ }
+
+ motores.push(motor);
+ if(!salvar()){
+  motores.pop();
+  return;
+ }
+ f.reset();
+ abrirMotor(id);
+});
+
+function abrirMotor(id){
+ const m=motores.find(x=>x.id===id);
+ if(!m){
+  alert("Motor não encontrado neste dispositivo.");
+  return;
+ }
+ motorAtual=id;
+ mostrar("detalhes");
+
+ const area=document.getElementById("dadosMotor");
+ area.innerHTML=`
+ <h2>Motor ${esc(m.tag)}</h2>
+ <p><b>ID:</b> ${esc(m.id)}</p>
+ <p><b>Fabricante:</b> ${esc(m.fabricante)}</p>
+ <p><b>Modelo:</b> ${esc(m.modelo)}</p>
+ <p><b>Potência:</b> ${esc(m.potencia)} kW</p>
+ <p><b>Corrente:</b> ${esc(m.corrente)} A</p>
+ <p><b>Tensão:</b> ${esc(m.tensao)} V</p>
+ <p><b>Local:</b> ${esc(m.local)}</p>
+ <p><b>Condição:</b> ${esc(m.condicao)}</p>
+ <p><b>Status:</b> ${esc(m.status)}</p>
+ <p><b>Cadastro:</b> ${new Date(m.data).toLocaleString("pt-BR")}</p>
+ ${m.foto?`<img class="photo" alt="Foto do motor">`:""}
+ <h3>QR Code de identificação</h3>
+ <div id="qr"></div>
+ <p><small>O QR identifica o motor, mas os dados precisam existir neste navegador.</small></p>
+ `;
+ if(m.foto)area.querySelector(".photo").src=m.foto;
+
+ const url=new URL(location.href);
+ url.searchParams.set("motor",m.id);
+
+ if(typeof QRCode!=="undefined"){
+  new QRCode(document.getElementById("qr"),{
+   text:url.href,width:190,height:190
+  });
+ }else{
+  document.getElementById("qr").textContent="Biblioteca QR indisponível.";
+ }
+
+ document.getElementById("novoStatus").value=m.status;
+ document.getElementById("novoLocal").value=m.local;
+
+ document.getElementById("historico").innerHTML=
+  m.historico.slice().reverse().map(h=>`
+  <div style="border-bottom:1px solid #ddd;padding:10px 0">
+   <b>${esc(h.novo)}</b><br>
+   ${new Date(h.data).toLocaleString("pt-BR")}<br>
+   Local: ${esc(h.local)}<br>
+   Responsável: ${esc(h.responsavel)}<br>
+   ${esc(h.observacao)}
+  </div>`).join("");
+}
+
+document.getElementById("formMovimento").addEventListener("submit",e=>{
+ e.preventDefault();
+ const m=motores.find(x=>x.id===motorAtual);
+ if(!m)return;
+
+ const anterior=m.status;
+ const novo=document.getElementById("novoStatus").value;
+ const local=document.getElementById("novoLocal").value.trim();
+ const responsavel=document.getElementById("responsavel").value.trim();
+ const observacao=document.getElementById("observacao").value;
+
+ if(!local||!responsavel)return;
+
+ const backup=JSON.stringify(m);
+ m.status=novo;
+ m.local=local;
+ m.historico.push({
+  data:new Date().toISOString(),
+  anterior,novo,local,responsavel,observacao
+ });
+
+ if(!salvar()){
+  Object.assign(m,JSON.parse(backup));
+  return;
+ }
+ document.getElementById("observacao").value="";
+ abrirMotor(m.id);
+ alert("Movimentação registrada.");
+});
+
+async function pararScanner(){
+ if(scanner){
+  try{await scanner.stop()}catch(e){}
+  try{scanner.clear()}catch(e){}
+  scanner=null;
+ }
+}
+
+async function iniciarScanner(){
+ await pararScanner();
+ if(typeof Html5Qrcode==="undefined"){
+  alert("Biblioteca do leitor QR indisponível.");
+  return;
+ }
+ try{
+  scanner=new Html5Qrcode("reader");
+  await scanner.start(
+   {facingMode:"environment"},
+   {fps:10,qrbox:{width:220,height:220}},
+   async texto=>{
+    let id="";
+    try{
+     const url=new URL(texto);
+     if(url.origin!==location.origin||
+        url.pathname!==location.pathname){
+      alert("QR de outro aplicativo.");
+      return;
+     }
+     id=url.searchParams.get("motor")||"";
+    }catch(e){
+     alert("QR inválido.");
+     return;
+    }
+    await pararScanner();
+    abrirMotor(id);
+   }
+  );
+ }catch(e){
+  alert("Não foi possível acessar a câmera: "+e.message);
+ }
+}
+
+function exportar(){
+ const cabecalho=[
+ "ID","TAG","Fabricante","Modelo","Potência kW",
+ "Corrente A","Tensão V","Local","Condição",
+ "Status","Foto ID","Data Cadastro"
+ ];
+ const linhas=motores.map(m=>[
+  m.id,m.tag,m.fabricante,m.modelo,m.potencia,
+  m.corrente,m.tensao,m.local,m.condicao,
+  m.status,m.fotoId,m.data
+ ]);
+ const celula=v=>'"'+String(v??"")
+  .replace(/^[=+\-@\t\r]/,"'$&")
+  .replace(/"/g,'""')+'"';
+ const csv=[cabecalho,...linhas]
+  .map(l=>l.map(celula).join(";")).join("\r\n");
+ const blob=new Blob(["\ufeff",csv],{
+  type:"text/csv;charset=utf-8"
+ });
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement("a");
+ a.href=url;
+ a.download="inventario_motores.csv";
+ a.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+carregar();
+listar();
+
+const inicial=new URLSearchParams(location.search).get("motor");
+if(inicial)abrirMotor(inicial);
+</script>
+</body>
+</html>
