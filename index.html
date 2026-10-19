@@ -7,6 +7,7 @@
 <title>ERP Motores</title>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:Arial;background:#eef2f7;color:#17283e}
@@ -18,7 +19,7 @@ button{background:#1269bc;color:white;border:0;border-radius:8px;padding:12px;cu
 .card{background:white;border-radius:12px;padding:20px;margin-bottom:15px}
 input,select,textarea{width:100%;padding:12px;margin:6px 0 14px;border:1px solid #ccd5df;border-radius:8px}
 label{font-size:13px;font-weight:bold}
-.hidden{display:none}
+.hidden{display:none!important}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}
 table{width:100%;border-collapse:collapse}
 td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}
@@ -26,21 +27,21 @@ td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}
 #reader{max-width:450px;margin:15px auto}
 img{max-width:300px;border-radius:8px}
 .info{background:#e4efff;padding:12px;border-radius:8px}
-#conexao{border:2px solid #1269bc}
-#conexao input{margin-bottom:10px}
-#estadoSync{font-size:13px;padding:8px 0;color:#345}
-#qrEtiqueta{display:inline-block;background:white;padding:12px}
+#qrEtiqueta{display:inline-block;background:#fff;padding:12px}
 #qrEtiqueta img{max-width:none}
+#etiqueta{border:1px solid #bbb;display:inline-block;text-align:center;padding:14px;margin:12px 0;max-width:100%;overflow-wrap:anywhere}
+#syncMsg{font-size:13px;color:#294c63}
+#loginBox{border:1px solid #cbd5e1;padding:12px;border-radius:8px;margin-top:12px}
+@media print{
+header,nav,#conexao,#formMovimento,#historico,#dados,.no-print,#avisoSync{display:none!important}
+main{padding:0}
+#ficha{display:block!important;box-shadow:none}
+#etiqueta{display:block!important;width:280px;margin:0 auto;border:2px solid #000}
+body{background:#fff}
+}
 @media(max-width:650px){
 .grid{grid-template-columns:1fr}
 nav button{flex:1}
-}
-@media print{
-header,nav,#conexao,#formMovimento,#historico,
-#avisoSync,.no-print{display:none!important}
-#ficha{display:block!important}
-#etiqueta{display:block!important;border:1px solid #111;width:290px;padding:15px}
-body{background:white}
 }
 </style>
 </head>
@@ -50,23 +51,23 @@ body{background:white}
 <p>Controle de estoque e manutenção por QR Code</p>
 </header>
 <main>
-
 <section id="conexao" class="card">
-<h2>Conexão com o banco compartilhado</h2>
-<p>Configure uma vez neste aparelho. Use somente a chave pública do Supabase.</p>
+<h3>Conexão com o banco compartilhado</h3>
+<p>Configure a URL e a chave pública do Supabase somente uma vez por aparelho.</p>
 <label>Project URL</label>
 <input id="supabaseUrl" placeholder="https://seu-projeto.supabase.co" autocomplete="off">
-<label>Publishable key (sb_publishable_... ou anon)</label>
-<input id="supabaseKey" placeholder="Chave pública" autocomplete="off">
+<label>Publishable key / anon</label>
+<input id="supabaseKey" placeholder="sb_publishable_..." autocomplete="off">
 <button type="button" onclick="configurar()">Salvar conexão</button>
-<hr>
-<label>E-mail do usuário</label>
+<div id="loginBox">
+<label>E-mail</label>
 <input id="emailLogin" type="email" autocomplete="username">
 <label>Senha</label>
 <input id="senhaLogin" type="password" autocomplete="current-password">
 <button type="button" onclick="entrar()">Entrar no ERP</button>
 <button type="button" onclick="sair()">Sair</button>
-<p id="estadoSync" aria-live="polite">Aguardando configuração.</p>
+</div>
+<p id="syncMsg" role="status">Aguardando conexão.</p>
 </section>
 
 <nav id="menuERP" class="hidden">
@@ -126,19 +127,16 @@ Consultar motor
 <section id="ficha" class="card hidden">
 <h2>Ficha do motor</h2>
 <div id="dados"></div>
-
-<div id="etiqueta" class="card" style="border:1px solid #ddd;text-align:center">
+<div id="etiqueta">
 <strong>IDENTIFICAÇÃO DO MOTOR</strong>
 <p id="etiquetaTag"></p>
 <div id="qrEtiqueta"></div>
 <p id="etiquetaId"></p>
 </div>
-
 <div class="no-print">
 <button type="button" onclick="baixarQR()">Baixar QR Code PNG</button>
 <button type="button" onclick="imprimirEtiqueta()">Imprimir etiqueta</button>
 </div>
-
 <h3>Movimentação</h3>
 <form id="formMovimento">
 <label>Status</label>
@@ -173,238 +171,150 @@ Consultar motor
 </table>
 </div>
 </section>
-
-<p id="avisoSync" class="info">
-Os dados dos motores serão compartilhados pelo Supabase após login.
-Cadastros antigos salvos somente neste navegador não são transferidos automaticamente.
+<p class="info" id="avisoSync">
+Cadastros novos são salvos no Supabase. Cadastros antigos deste navegador não são migrados automaticamente.
 </p>
 </main>
 
 <script>
-const CONF_KEY="erp_motores_supabase_config";
-const AUTH_KEY="erp_motores_supabase_session";
+const $ = id => document.getElementById(id);
+const CFG = 'erp_motores_supabase_config';
+let db = null, motores = [], atual = null, scanner = null, lendo = false;
+let timer = null, leituraPendente = false;
+const msg = s => { $('syncMsg').textContent = s; };
+const erro = e => e?.message || String(e);
 
-let config=JSON.parse(localStorage.getItem(CONF_KEY)||"null");
-let sessao=JSON.parse(localStorage.getItem(AUTH_KEY)||"null");
-let motores=[],atual=null,scanner=null,lendo=false,timerSync=null;
-let consultando=false;
-
-const $=id=>document.getElementById(id);
-const mensagem=txt=>{$("estadoSync").textContent=txt;};
-
-function erroTexto(e){
- return e?.message||String(e);
-}
-
-function conectado(){
- return Boolean(config?.url&&config?.key&&sessao?.access_token);
-}
-
-function exigirLogin(){
- if(!conectado()){
-  alert("Conecte ao Supabase e faça login primeiro.");
-  return false;
- }
- return true;
+function mostrar(tela){
+ if(!db)return alert('Configure o Supabase e faça login.');
+ document.querySelectorAll('main section').forEach(s => {
+  if(s.id !== 'conexao')s.classList.toggle('hidden',s.id !== tela);
+ });
+ if(tela === 'estoque')atualizar().catch(e=>msg('Erro: '+erro(e)));
+ if(tela !== 'leitor')parar();
 }
 
 function configurar(){
- const url=$("supabaseUrl").value.trim().replace(/\/$/,"");
- const key=$("supabaseKey").value.trim();
-
- if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)||!key){
-  return alert("Informe a Project URL e a chave pública válidas.");
- }
-
- if(key.startsWith("sb_secret_")||
-   (!key.startsWith("eyJ")&&!key.startsWith("sb_publishable_"))){
-  return alert("Use apenas a Publishable key ou a chave anon pública.");
- }
-
- config={url,key};
- localStorage.setItem(CONF_KEY,JSON.stringify(config));
- mensagem("Conexão salva. Informe e-mail e senha e clique em Entrar.");
-}
-
-async function autenticar(caminho,body){
- const r=await fetch(config.url+"/auth/v1/"+caminho,{
-  method:"POST",
-  headers:{
-   "apikey":config.key,
-   "Content-Type":"application/json"
-  },
-  body:JSON.stringify(body)
+ const url=$('supabaseUrl').value.trim().replace(/\/$/,'');
+ const key=$('supabaseKey').value.trim();
+ if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url))
+  return alert('Project URL inválida.');
+ if(!key || key.startsWith('sb_secret_') ||
+    key.startsWith('sb_service_') ||
+    (key.startsWith('sb_')&&!key.startsWith('sb_publishable_')))
+  return alert('Use somente a chave pública publishable ou anon.');
+ if(!window.supabase?.createClient)
+  return alert('A biblioteca Supabase não carregou.');
+ localStorage.setItem(CFG,JSON.stringify({url,key}));
+ db=window.supabase.createClient(url,key,{
+  auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}
  });
- const d=await r.json().catch(()=>({}));
- if(!r.ok){
-  throw Error(d.msg||d.error_description||d.message||
-   "Falha na autenticação ("+r.status+")");
- }
- return d;
+ msg('Conexão salva. Entre com usuário autorizado.');
 }
 
 async function entrar(){
- if(!config)return alert("Primeiro salve a URL e a chave pública.");
+ if(!db)return alert('Salve primeiro a conexão.');
  try{
-  mensagem("Entrando...");
-  sessao=await autenticar("token?grant_type=password",{
-   email:$("emailLogin").value.trim(),
-   password:$("senhaLogin").value
+  msg('Autenticando...');
+  const {error}=await db.auth.signInWithPassword({
+   email:$('emailLogin').value.trim(),
+   password:$('senhaLogin').value
   });
-  localStorage.setItem(AUTH_KEY,JSON.stringify(sessao));
-  $("senhaLogin").value="";
+  if(error)throw error;
+  $('senhaLogin').value='';
   await iniciarERP();
- }catch(e){
-  mensagem("Erro: "+erroTexto(e));
- }
+ }catch(e){msg('Falha no login: '+erro(e));}
 }
 
-async function renovar(){
- if(!sessao?.refresh_token)throw Error("Faça login novamente.");
- sessao=await autenticar("token?grant_type=refresh_token",{
-  refresh_token:sessao.refresh_token
+async function sair(){
+ if(db)await db.auth.signOut();
+ clearInterval(timer);
+ motores=[];atual=null;
+ $('menuERP').classList.add('hidden');
+ $('loginBox').classList.remove('hidden');
+ document.querySelectorAll('main section').forEach(s=>{
+  if(s.id!=='conexao')s.classList.add('hidden');
  });
- localStorage.setItem(AUTH_KEY,JSON.stringify(sessao));
+ msg('Sessão encerrada.');
 }
 
-async function api(caminho,{method="GET",body,headers={}}={},tentativa=true){
- if(!conectado())throw Error("Faça login para acessar o banco.");
-
- const h={
-  "apikey":config.key,
-  "Authorization":"Bearer "+sessao.access_token,
-  ...headers
- };
-
- if(body!==undefined&&!h["Content-Type"]){
-  h["Content-Type"]="application/json";
- }
-
- const r=await fetch(config.url+caminho,{
-  method,
-  headers:h,
-  body:body===undefined?undefined:
-   typeof body==="string"||body instanceof Blob?
-   body:JSON.stringify(body)
- });
-
- if(r.status===401&&tentativa){
-  await renovar();
-  return api(caminho,{method,body,headers},false);
- }
-
- if(!r.ok){
-  const d=await r.json().catch(()=>({}));
-  throw Error(d.message||d.error||"Erro HTTP "+r.status);
- }
-
- if(r.status===204)return null;
- return r.json().catch(()=>null);
-}
-
-function mostrar(tela){
- if(!conectado())return alert("Entre no ERP primeiro.");
-
- document.querySelectorAll("main section").forEach(s=>{
-  if(s.id!=="conexao"){
-   s.classList.toggle("hidden",s.id!==tela);
-  }
- });
-
- if(tela==="estoque"){
-  atualizar().catch(e=>mensagem("Erro ao atualizar: "+erroTexto(e)));
- }
-
- if(tela!=="leitor")parar();
-}
-
-function extrairId(valor){
- valor=String(valor||"").trim();
- if(!valor)return "";
-
- try{
-  const u=new URL(valor);
-  const id=u.searchParams.get("motor")||
-           u.searchParams.get("id")||
-           u.searchParams.get("asset_id");
-  return id?id.trim():"";
- }catch(e){
-  return valor;
- }
-}
-
-function mapMotor(m){
- return {
-  ...m,
-  cadastro:m.created_at,
-  foto:"",
-  fotoId:m.foto_path||"",
-  historico:[]
- };
+async function iniciarERP(){
+ if(!db)throw Error('Conexão não configurada.');
+ const {data:{user},error}=await db.auth.getUser();
+ if(error||!user)throw Error('Faça login com usuário cadastrado no Supabase.');
+ await atualizar();
+ $('menuERP').classList.remove('hidden');
+ $('loginBox').classList.add('hidden');
+ mostrar('leitor');
+ clearInterval(timer);
+ timer=setInterval(()=>{
+  atualizar().catch(e=>msg('Falha de sincronização: '+erro(e)));
+ },20000);
+ const id=new URLSearchParams(location.search).get('motor');
+ if(id)await consultar(id);
 }
 
 async function atualizar(){
- if(!conectado())return;
-
- const dados=await api(
-  "/rest/v1/motors?select=*&order=created_at.desc&limit=1000"
- );
-
- motores=(dados||[]).map(mapMotor);
+ if(!db)return;
+ let todos=[],inicio=0;
+ while(true){
+  const {data,error}=await db.from('motors')
+   .select('*')
+   .order('created_at',{ascending:false})
+   .range(inicio,inicio+999);
+  if(error)throw error;
+  todos.push(...(data||[]));
+  if(!data||data.length<1000)break;
+  inicio+=1000;
+ }
+ motores=todos;
  listar();
+ msg('Sincronizado: '+motores.length+' motor(es) • '+
+     new Date().toLocaleTimeString('pt-BR'));
+}
 
- mensagem(
-  "Banco sincronizado: "+motores.length+
-  " motor(es). Última atualização: "+
-  new Date().toLocaleTimeString("pt-BR")
- );
+function extrairId(valor){
+ valor=String(valor||'').trim();
+ if(!valor)return '';
+ try{
+  const u=new URL(valor);
+  return (u.searchParams.get('motor')||
+          u.searchParams.get('id')||
+          u.searchParams.get('asset_id')||'').trim();
+ }catch(e){return valor;}
 }
 
 async function consultar(valor){
- if(consultando||!exigirLogin())return;
-
+ if(leituraPendente)return;
  const id=extrairId(valor);
-
  if(!id){
-  $("mensagem").textContent="QR Code vazio ou sem identificador.";
+  $('mensagem').textContent='QR Code vazio ou sem identificador.';
   return;
  }
-
- consultando=true;
-
+ if(!db)return alert('Faça login primeiro.');
+ leituraPendente=true;
  try{
-  const resultado=await api(
-   "/rest/v1/motors?select=*&id=eq."+
-   encodeURIComponent(id)+"&limit=1"
-  );
-
-  if(resultado?.length){
-   await abrir(id,resultado[0]);
-  }else{
-   $("formCadastro").reset();
-   $("idMotor").value=id;
-   mostrar("cadastro");
+  const {data,error}=await db.from('motors')
+   .select('*').eq('id',id).maybeSingle();
+  if(error)throw error;
+  if(data)await abrir(id,data);
+  else{
+   $('formCadastro').reset();
+   $('idMotor').value=id;
+   mostrar('cadastro');
   }
- }catch(e){
-  alert("Falha ao consultar o banco: "+erroTexto(e));
- }finally{
-  consultando=false;
- }
+ }catch(e){alert('Erro ao consultar motor: '+erro(e));}
+ finally{leituraPendente=false;}
 }
 
 async function iniciar(){
- if(lendo||!exigirLogin())return;
-
- if(typeof Html5Qrcode==="undefined"){
-  return alert("Biblioteca do leitor não carregou.");
- }
-
+ if(lendo)return;
+ if(typeof Html5Qrcode==='undefined')
+  return alert('Biblioteca do leitor não carregou.');
  try{
-  scanner=new Html5Qrcode("reader");
+  scanner=new Html5Qrcode('reader');
   lendo=true;
-
   await scanner.start(
-   {facingMode:"environment"},
+   {facingMode:'environment'},
    {fps:10,qrbox:230},
    async codigo=>{
     if(!lendo)return;
@@ -416,7 +326,7 @@ async function iniciar(){
  }catch(e){
   lendo=false;
   scanner=null;
-  alert("Erro ao acessar câmera: "+erroTexto(e));
+  alert('Erro ao acessar câmera: '+erro(e));
  }
 }
 
@@ -432,334 +342,238 @@ async function parar(){
 
 function fotoBase64(file){
  return new Promise((resolve,reject)=>{
-  if(!file||!file.size)return resolve("");
-
-  if(!file.type.startsWith("image/")){
-   return reject(Error("Selecione uma imagem."));
-  }
-
-  const url=URL.createObjectURL(file);
-  const img=new Image();
-
+  if(!file||!file.size)return resolve('');
+  if(!file.type.startsWith('image/'))
+   return reject(Error('Selecione uma imagem.'));
+  const url=URL.createObjectURL(file),img=new Image();
   img.onload=()=>{
-   const c=document.createElement("canvas");
+   const c=document.createElement('canvas');
    const escala=Math.min(1,700/img.width,700/img.height);
-
    c.width=Math.max(1,Math.round(img.width*escala));
    c.height=Math.max(1,Math.round(img.height*escala));
-
-   c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+   c.getContext('2d').drawImage(img,0,0,c.width,c.height);
    URL.revokeObjectURL(url);
-
-   resolve(c.toDataURL("image/jpeg",0.65));
+   resolve(c.toDataURL('image/jpeg',0.65));
   };
-
   img.onerror=()=>{
    URL.revokeObjectURL(url);
-   reject(Error("Falha na fotografia"));
+   reject(Error('Falha na fotografia'));
   };
-
   img.src=url;
  });
 }
 
-async function enviarFoto(base64){
- if(!base64)return null;
-
- const bytes=atob(base64.split(",")[1]);
- const arr=new Uint8Array(bytes.length);
-
- for(let i=0;i<bytes.length;i++){
-  arr[i]=bytes.charCodeAt(i);
- }
-
- const path=crypto.randomUUID()+".jpg";
-
- await api("/storage/v1/object/motor-photos/"+path,{
-  method:"POST",
-  body:new Blob([arr],{type:"image/jpeg"}),
-  headers:{
-   "Content-Type":"image/jpeg",
-   "x-upsert":"false"
-  }
- });
-
- return path;
+function base64Blob(base64){
+ const bytes=atob(base64.split(',')[1]);
+ const a=new Uint8Array(bytes.length);
+ for(let i=0;i<bytes.length;i++)a[i]=bytes.charCodeAt(i);
+ return new Blob([a],{type:'image/jpeg'});
 }
 
-async function fotoAssinada(path){
- if(!path)return "";
-
- const r=await api(
-  "/storage/v1/object/sign/motor-photos/"+encodeURIComponent(path),
-  {
-   method:"POST",
-   body:{expiresIn:3600}
-  }
- );
-
- if(!r?.signedURL)return "";
-
- return new URL(r.signedURL,config.url).href;
-}
-
-$("formCadastro").onsubmit=async e=>{
+$('formCadastro').onsubmit=async e=>{
  e.preventDefault();
-
- if(!exigirLogin())return;
-
- const f=e.target;
- const d=new FormData(f);
- const id=extrairId($("idMotor").value);
-
- if(!id)return alert("Informe o ID do QR.");
-
+ if(!db)return alert('Faça login primeiro.');
+ const f=e.target,d=new FormData(f);
+ const id=extrairId($('idMotor').value);
+ if(!id)return alert('Informe o ID do QR.');
+ const btn=f.querySelector('button[type=submit]');
+ btn.disabled=true;
+ let fotoPath=null, cadastrado=false;
  try{
-  const existente=await api(
-   "/rest/v1/motors?select=id&id=eq."+
-   encodeURIComponent(id)+"&limit=1"
-  );
+  const {data:existente,error:checkError}=await db.from('motors')
+   .select('id').eq('id',id).maybeSingle();
+  if(checkError)throw checkError;
+  if(existente)return alert('Este QR Code já está associado a um motor.');
 
-  if(existente.length){
-   return alert("Este QR Code já está associado a um motor.");
+  const foto=await fotoBase64(d.get('foto'));
+  if(foto){
+   fotoPath=crypto.randomUUID()+'.jpg';
+   const {error}=await db.storage.from('motor-photos')
+    .upload(fotoPath,base64Blob(foto),{
+     contentType:'image/jpeg',upsert:false
+    });
+   if(error)throw error;
   }
 
-  const foto=await fotoBase64(d.get("foto"));
-  const fotoPath=await enviarFoto(foto);
-
-  const motor={
+  const m={
    id,
-   tag:String(d.get("tag")).trim(),
-   fabricante:String(d.get("fabricante")||""),
-   modelo:String(d.get("modelo")||""),
-   potencia:Number(d.get("potencia")),
-   corrente:Number(d.get("corrente")),
-   tensao:d.get("tensao")?Number(d.get("tensao")):null,
-   local:String(d.get("local")).trim(),
-   condicao:String(d.get("condicao")),
-   status:"Disponível",
+   tag:String(d.get('tag')).trim(),
+   fabricante:String(d.get('fabricante')||''),
+   modelo:String(d.get('modelo')||''),
+   potencia:Number(d.get('potencia')),
+   corrente:Number(d.get('corrente')),
+   tensao:d.get('tensao')===''?null:Number(d.get('tensao')),
+   local:String(d.get('local')).trim(),
+   condicao:String(d.get('condicao')),
+   status:'Disponível',
    foto_path:fotoPath
   };
 
-  await api("/rest/v1/motors",{
-   method:"POST",
-   body:motor,
-   headers:{"Prefer":"return=minimal"}
-  });
+  const {error}=await db.from('motors').insert(m);
+  if(error)throw error;
+  cadastrado=true;
 
-  try{
-   await api("/rest/v1/movements",{
-    method:"POST",
-    body:{
-     motor_id:id,
-     status:"Disponível",
-     local:motor.local,
-     responsavel:"Cadastro",
-     observacao:"QR Code associado ao motor"
-    }
-   });
-  }catch(e){
-   console.warn("Histórico inicial não registrado",e);
-  }
+  const {error:histError}=await db.from('movements').insert({
+   motor_id:id,
+   status:'Disponível',
+   local:m.local,
+   responsavel:'Cadastro',
+   observacao:'QR Code associado ao motor'
+  });
+  if(histError)msg('Motor cadastrado; histórico inicial não gravado: '+erro(histError));
 
   f.reset();
   await atualizar();
   await abrir(id);
-
- }catch(err){
-  alert("Cadastro não concluído: "+erroTexto(err));
- }
+ }catch(e){
+  if(fotoPath&&!cadastrado){
+   try{await db.storage.from('motor-photos').remove([fotoPath]);}
+   catch(ignore){}
+  }
+  alert('Erro ao cadastrar: '+erro(e));
+ }finally{btn.disabled=false;}
 };
 
 function adicionarTexto(pai,titulo,valor){
- const p=document.createElement("p");
- const b=document.createElement("b");
-
- b.textContent=titulo+": ";
- p.append(b,document.createTextNode(String(valor??"")));
+ const p=document.createElement('p');
+ const b=document.createElement('b');
+ b.textContent=titulo+': ';
+ p.append(b,document.createTextNode(String(valor??'')));
  pai.appendChild(p);
 }
 
-async function abrir(id,precarregado=null){
- if(!exigirLogin())return;
-
+async function abrir(id,dado=null){
  try{
-  const lista=precarregado?
-   [precarregado]:
-   await api(
-    "/rest/v1/motors?select=*&id=eq."+
-    encodeURIComponent(id)+"&limit=1"
-   );
-
-  if(!lista.length){
-   return alert("Motor não encontrado no banco compartilhado.");
+  let m=dado;
+  if(!m){
+   const r=await db.from('motors').select('*').eq('id',id).single();
+   if(r.error)throw r.error;
+   m=r.data;
   }
-
-  const m=mapMotor(lista[0]);
   atual=id;
-  mostrar("ficha");
-
-  const area=$("dados");
+  mostrar('ficha');
+  const area=$('dados');
   area.replaceChildren();
 
   [
-   ["ID do QR",m.id],
-   ["TAG",m.tag],
-   ["Fabricante",m.fabricante],
-   ["Modelo",m.modelo],
-   ["Potência",m.potencia+" kW"],
-   ["Corrente",m.corrente+" A"],
-   ["Tensão",(m.tensao??"")+" V"],
-   ["Local",m.local],
-   ["Condição",m.condicao],
-   ["Status",m.status],
-   ["Cadastro",new Date(m.cadastro).toLocaleString("pt-BR")]
+   ['ID do QR',m.id],
+   ['TAG',m.tag],
+   ['Fabricante',m.fabricante],
+   ['Modelo',m.modelo],
+   ['Potência',m.potencia+' kW'],
+   ['Corrente',m.corrente+' A'],
+   ['Tensão',(m.tensao??'')+' V'],
+   ['Local',m.local],
+   ['Condição',m.condicao],
+   ['Status',m.status],
+   ['Cadastro',new Date(m.created_at).toLocaleString('pt-BR')]
   ].forEach(([a,b])=>adicionarTexto(area,a,b));
 
   if(m.foto_path){
-   const img=document.createElement("img");
-   img.alt="Fotografia do motor";
-   img.src=await fotoAssinada(m.foto_path);
-   area.appendChild(img);
+   const {data,error}=await db.storage.from('motor-photos')
+    .createSignedUrl(m.foto_path,3600);
+   if(!error&&data?.signedUrl){
+    const img=document.createElement('img');
+    img.src=data.signedUrl;
+    img.alt='Fotografia do motor';
+    area.appendChild(img);
+   }
   }
 
-  $("status").value=m.status;
-  $("localNovo").value=m.local;
+  $('status').value=m.status;
+  $('localNovo').value=m.local;
+  $('etiquetaTag').textContent='TAG: '+m.tag;
+  $('etiquetaId').textContent='ID: '+m.id;
+  $('qrEtiqueta').replaceChildren();
 
-  $("etiquetaTag").textContent="TAG: "+m.tag;
-  $("etiquetaId").textContent="ID: "+m.id;
-  $("qrEtiqueta").replaceChildren();
-
-  if(typeof QRCode!=="undefined"){
-   const url=new URL(location.href);
-   url.searchParams.set("motor",m.id);
-
-   new QRCode($("qrEtiqueta"),{
-    text:url.toString(),
+  if(typeof QRCode!=='undefined'){
+   const u=new URL(location.origin+location.pathname);
+   u.searchParams.set('motor',m.id);
+   new QRCode($('qrEtiqueta'),{
+    text:u.toString(),
     width:190,
     height:190
    });
   }else{
-   $("qrEtiqueta").textContent="Biblioteca QR indisponível.";
+   $('qrEtiqueta').textContent='Biblioteca QR indisponível.';
   }
 
-  const hist=await api(
-   "/rest/v1/movements?select=*&motor_id=eq."+
-   encodeURIComponent(id)+"&order=created_at.desc&limit=500"
-  );
+  const {data:hist,error:histError}=await db.from('movements')
+   .select('*').eq('motor_id',id)
+   .order('created_at',{ascending:false}).limit(500);
+  if(histError)throw histError;
 
-  const div=$("historico");
-  div.replaceChildren();
-
-  for(const h of hist){
-   const bloco=document.createElement("div");
-   bloco.style.borderBottom="1px solid #ddd";
-   bloco.style.padding="10px";
-
+  const areaHist=$('historico');
+  areaHist.replaceChildren();
+  (hist||[]).forEach(h=>{
+   const bloco=document.createElement('div');
+   bloco.style.borderBottom='1px solid #ddd';
+   bloco.style.padding='10px';
    [
-    ["Data",new Date(h.created_at).toLocaleString("pt-BR")],
-    ["Status",h.status],
-    ["Local",h.local],
-    ["Responsável",h.responsavel],
-    ["Observação",h.observacao]
+    ['Data',new Date(h.created_at).toLocaleString('pt-BR')],
+    ['Status',h.status],
+    ['Local',h.local],
+    ['Responsável',h.responsavel],
+    ['Observação',h.observacao]
    ].forEach(([a,b])=>adicionarTexto(bloco,a,b));
-
-   div.appendChild(bloco);
-  }
-
- }catch(e){
-  alert("Erro ao abrir ficha: "+erroTexto(e));
- }
-}
-
-function baixarQR(){
- const c=$("qrEtiqueta").querySelector("canvas");
- const img=$("qrEtiqueta").querySelector("img");
- const src=c?.toDataURL("image/png")||img?.src;
-
- if(!src)return alert("QR Code não disponível.");
-
- const a=document.createElement("a");
- a.href=src;
- a.download="QR_MOTOR_"+
-  String(atual||"motor").replace(/[^a-z0-9_-]/gi,"_")+
-  ".png";
- a.click();
-}
-
-function imprimirEtiqueta(){
- window.print();
-}
-
-$("formMovimento").onsubmit=async e=>{
- e.preventDefault();
-
- if(!atual||!exigirLogin())return;
-
- const status=$("status").value;
- const local=$("localNovo").value.trim();
- const responsavel=$("responsavel").value.trim();
- const observacao=$("observacao").value;
-
- if(!local||!responsavel){
-  return alert("Informe local e responsável.");
- }
-
- try{
-  await api("/rest/v1/movements",{
-   method:"POST",
-   body:{
-    motor_id:atual,
-    status,
-    local,
-    responsavel,
-    observacao
-   }
+   areaHist.appendChild(bloco);
   });
+ }catch(e){alert('Erro ao abrir motor: '+erro(e));}
+}
 
-  await api(
-   "/rest/v1/motors?id=eq."+encodeURIComponent(atual),
-   {
-    method:"PATCH",
-    body:{status,local}
-   }
-  );
+$('formMovimento').onsubmit=async e=>{
+ e.preventDefault();
+ if(!atual)return;
+ const status=$('status').value;
+ const local=$('localNovo').value.trim();
+ const responsavel=$('responsavel').value.trim();
+ const observacao=$('observacao').value;
+ if(!local||!responsavel)
+  return alert('Informe local e responsável.');
 
-  $("observacao").value="";
+ const btn=e.target.querySelector('button');
+ btn.disabled=true;
+ try{
+  const {error}=await db.from('movements').insert({
+   motor_id:atual,status,local,responsavel,observacao
+  });
+  if(error)throw error;
+
+  const r=await db.from('motors')
+   .update({status,local})
+   .eq('id',atual)
+   .select('id');
+  if(r.error)throw r.error;
+  if(!r.data?.length)
+   throw Error('Motor não atualizado; verifique permissões.');
+
+  $('observacao').value='';
   await atualizar();
   await abrir(atual);
-
  }catch(e){
-  alert("Falha na movimentação: "+erroTexto(e)+
-   ". Confira a ficha antes de repetir.");
- }
+  alert('Erro na movimentação: '+erro(e)+
+        '. Confira o histórico antes de repetir.');
+ }finally{btn.disabled=false;}
 };
 
 function listar(){
- const busca=$("busca").value.toLowerCase();
- const tabela=$("tabela");
+ const busca=$('busca').value.toLowerCase();
+ const tabela=$('tabela');
  tabela.replaceChildren();
-
  motores.filter(m=>
-  [m.id,m.tag,m.local,m.status]
-   .join(" ").toLowerCase().includes(busca)
+  [m.id,m.tag,m.local,m.status].join(' ')
+   .toLowerCase().includes(busca)
  ).forEach(m=>{
-  const tr=document.createElement("tr");
-
-  [
-   m.id,m.tag,m.potencia+" kW",m.local,m.status
-  ].forEach(valor=>{
-   const td=document.createElement("td");
+  const tr=document.createElement('tr');
+  [m.id,m.tag,m.potencia+' kW',m.local,m.status].forEach(valor=>{
+   const td=document.createElement('td');
    td.textContent=valor;
    tr.appendChild(td);
   });
-
-  const td=document.createElement("td");
-  const btn=document.createElement("button");
-
-  btn.textContent="Abrir";
+  const td=document.createElement('td');
+  const btn=document.createElement('button');
+  btn.textContent='Abrir';
   btn.onclick=()=>abrir(m.id);
-
   td.appendChild(btn);
   tr.appendChild(td);
   tabela.appendChild(tr);
@@ -767,96 +581,61 @@ function listar(){
 }
 
 async function exportar(){
- if(!exigirLogin())return;
-
  try{
   await atualizar();
-
   const linhas=[
-   [
-    "ID QR","TAG","Fabricante","Modelo",
-    "Potência kW","Corrente A","Tensão V",
-    "Local","Condição","Status","Foto ID","Data Cadastro"
-   ],
+   ['ID QR','TAG','Fabricante','Modelo','Potência kW',
+    'Corrente A','Tensão V','Local','Condição','Status',
+    'Foto ID','Data Cadastro'],
    ...motores.map(m=>[
-    m.id,m.tag,m.fabricante,m.modelo,
-    m.potencia,m.corrente,m.tensao,m.local,
-    m.condicao,m.status,m.foto_path,m.cadastro
+    m.id,m.tag,m.fabricante,m.modelo,m.potencia,
+    m.corrente,m.tensao,m.local,m.condicao,m.status,
+    m.foto_path,m.created_at
    ])
   ];
-
   const csv=linhas.map(l=>l.map(v=>
-   '"'+String(v??"")
+   '"'+String(v??'')
     .replace(/^[=+\-@\t\r]/,"'")
     .replace(/"/g,'""')+'"'
-  ).join(";")).join("\r\n");
+  ).join(';')).join('\r\n');
 
-  const blob=new Blob(["\ufeff"+csv],{
-   type:"text/csv;charset=utf-8"
-  });
-
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-
+  const url=URL.createObjectURL(
+   new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'})
+  );
+  const a=document.createElement('a');
   a.href=url;
-  a.download="inventario_motores.csv";
+  a.download='inventario_motores.csv';
   a.click();
-
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-
- }catch(e){
-  alert("Falha ao exportar: "+erroTexto(e));
- }
+ }catch(e){alert('Erro ao exportar: '+erro(e));}
 }
 
-function sair(){
- sessao=null;
- localStorage.removeItem(AUTH_KEY);
- motores=[];
- atual=null;
-
- $("menuERP").classList.add("hidden");
-
- document.querySelectorAll("main section").forEach(s=>{
-  if(s.id!=="conexao")s.classList.add("hidden");
- });
-
- clearInterval(timerSync);
- mensagem("Sessão encerrada.");
+function baixarQR(){
+ const canvas=$('qrEtiqueta').querySelector('canvas');
+ const img=$('qrEtiqueta').querySelector('img');
+ if(!canvas&&!img)return alert('QR Code indisponível.');
+ const a=document.createElement('a');
+ a.href=canvas?.toDataURL('image/png')||img.src;
+ a.download='QR_'+String(atual)
+  .replace(/[^a-z0-9_-]/gi,'_')+'.png';
+ a.click();
 }
 
-async function iniciarERP(){
- await atualizar();
-
- $("menuERP").classList.remove("hidden");
- mostrar("leitor");
-
- clearInterval(timerSync);
-
- timerSync=setInterval(()=>{
-  if(conectado()){
-   atualizar().catch(e=>
-    mensagem("Falha de sincronização: "+erroTexto(e))
-   );
-  }
- },20000);
-
- const id=new URLSearchParams(location.search).get("motor");
-
- if(id)await consultar(id);
+function imprimirEtiqueta(){
+ window.print();
 }
 
-if(config){
- $("supabaseUrl").value=config.url;
- $("supabaseKey").value=config.key;
-}
-
-if(conectado()){
- iniciarERP().catch(e=>
-  mensagem("Sessão expirada ou banco indisponível: "+
-   erroTexto(e)+". Faça login novamente.")
- );
-}
+(async()=>{
+ try{
+  const salvo=JSON.parse(localStorage.getItem(CFG)||'null');
+  if(!salvo)return;
+  $('supabaseUrl').value=salvo.url;
+  $('supabaseKey').value=salvo.key;
+  configurar();
+  const {data:{session}}=await db.auth.getSession();
+  if(session)await iniciarERP();
+ }catch(e){msg('Faça login: '+erro(e));}
+})();
 </script>
 </body>
 </html>
